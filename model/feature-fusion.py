@@ -10,7 +10,7 @@ from util.CBAM import ChannelAttention, SpatialAttention
 
 class DualResNet50(nn.Module):
 
-    def __init__(self, out_channel=512):
+    def __init__(self, model_camera, model_sonar, out_channel=512):
         super().__init__()
         self.in_channels_list = [256, 512, 1024, 2048]
         self.in_width_list = [128, 64, 32, 16]        
@@ -36,8 +36,8 @@ class DualResNet50(nn.Module):
         self.FPN_s = FeaturePyramidNetwork(in_channels_list=self.in_channels_list, out_channels=out_channel)
         self.FPN_c = FeaturePyramidNetwork(in_channels_list=self.in_channels_list, out_channels=out_channel)
 
-        self.cam = resnet50(weights=None)
-        self.sonar = resnet50(weights=None)
+        self.cam = model_camera
+        self.sonar = model_sonar
 
     def features(self, x, y):
         """x is camera, y is sonar"""
@@ -128,16 +128,3 @@ class DualResNet50(nn.Module):
         cam_fpn = self.FPN_c(camera_feature)
         son_fpn = self.FPN_s(sonar_feature)       
         return cam_fpn, son_fpn
-
-
-if __name__ == "__main__":
-    model = DualResNet50().train()
-
-    cam = torch.rand(2, 3, 512, 512)
-    sonar = torch.rand(2, 3, 512, 512)
-
-    with torch.no_grad():
-        feature_map = model(cam, sonar)
-
-    for name, feat in feature_map.items():
-        print(name, tuple(feat.shape))
