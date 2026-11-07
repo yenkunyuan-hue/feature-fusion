@@ -4,9 +4,9 @@ import torch
 import torch.nn as nn
 
 from torchvision.models import resnet50
+from torchvision.models import ResNet50_Weights
 from torchvision.ops import FeaturePyramidNetwork
 from util.CBAM import ChannelAttention, SpatialAttention
-
 
 class DualResNet50(nn.Module):
 
@@ -36,13 +36,14 @@ class DualResNet50(nn.Module):
         self.FPN_s = FeaturePyramidNetwork(in_channels_list=self.in_channels_list, out_channels=out_channel)
         self.FPN_c = FeaturePyramidNetwork(in_channels_list=self.in_channels_list, out_channels=out_channel)
 
-        self.cam = resnet50()
-        self.sonar = resnet50()
+        self.cam = resnet50(weights=None)
+        self.sonar = resnet50(weights=None)
 
     def features(self, x, y):
         """x is camera, y is sonar"""
         net_cam = self.cam
         net_son = self.sonar
+
         # stem：ResNet 的第一部分
         stem_cam = nn.Sequential(
         net_cam.conv1,       # (B, 64, 256, 256)   7×7 卷积，stride 2
@@ -66,8 +67,8 @@ class DualResNet50(nn.Module):
 
         c3_son_t = self.tokenize(c3_son)
         c3_cam_t = self.tokenize(c3_cam)
-        c3_stoc, _ = self.son_mha_c3(query=c3_cam_t, key=c3_son_t, value=c3_son_t)
-        c3_ctos, _ = self.cam_mha_c3(query=c3_son_t, key=c3_cam_t, value=c3_cam_t)
+        c3_stoc = self.son_mha_c3(query=c3_cam_t, key=c3_son_t, value=c3_son_t, need_weights=False)
+        c3_ctos = self.cam_mha_c3(query=c3_son_t, key=c3_cam_t, value=c3_cam_t, need_weights=False)
         c3_son_self, c3_cam_self = self.self_attention(c3_cam,c3_son,0)
         c3_son = c3_son_self + self.untokenize(c3_ctos, 1)
         c3_cam = c3_cam_self + self.untokenize(c3_stoc, 1)
@@ -77,8 +78,8 @@ class DualResNet50(nn.Module):
 
         c4_son_t = self.tokenize(c4_son)
         c4_cam_t = self.tokenize(c4_cam)
-        c4_stoc, _ = self.son_mha_c4(query=c4_cam_t, key=c4_son_t, value=c4_son_t)
-        c4_ctos, _ = self.cam_mha_c4(query=c4_son_t, key=c4_cam_t, value=c4_cam_t)
+        c4_stoc = self.son_mha_c4(query=c4_cam_t, key=c4_son_t, value=c4_son_t, need_weights=False)
+        c4_ctos = self.cam_mha_c4(query=c4_son_t, key=c4_cam_t, value=c4_cam_t, need_weights=False)
         c4_son_self, c4_cam_self = self.self_attention(c4_cam,c4_son,1)
         c4_son = c4_son_self + self.untokenize(c4_ctos, 2)
         c4_cam = c4_cam_self + self.untokenize(c4_stoc, 2)
@@ -87,20 +88,18 @@ class DualResNet50(nn.Module):
         c5_cam = net_cam.layer4(c4_cam)
         c5_son_t = self.tokenize(c5_son)
         c5_cam_t = self.tokenize(c5_cam)
-        c5_stoc, _ = self.son_mha_c5(query=c5_cam_t, key=c5_son_t, value=c5_son_t)
-        c5_ctos, _ = self.cam_mha_c5(query=c5_son_t, key=c5_cam_t, value=c5_cam_t)
+        c5_stoc = self.son_mha_c5(query=c5_cam_t, key=c5_son_t, value=c5_son_t, need_weights=False)
+        c5_ctos = self.cam_mha_c5(query=c5_son_t, key=c5_cam_t, value=c5_cam_t, need_weights=False)
         c5_son_self, c5_cam_self = self.self_attention(c5_cam,c5_son,2)
         c5_son = c5_son_self + self.untokenize(c5_ctos,3)
         c5_cam = c5_cam_self + self.untokenize(c5_stoc,3)
 
         return {"c2":c2_son, "c3":c3_son, "c4":c4_son, "c5":c5_son}, {"c2":c2_cam, "c3":c3_cam, "c4":c4_cam, "c5":c5_cam}
 
-
-
     def self_attention(self, cam_feats, sonar_feats, layer_num:int):
         #(channel_weight + spatial weight + 1) x feature map 
         cam_feats = (1 + self.camera_ca[layer_num](cam_feats) + self.camera_sa[layer_num](cam_feats)) * cam_feats
-        sonar_feats = (1 + self.sonar_ca[layer_num](cam_feats) + self.sonar_sa[layer_num](cam_feats)) * sonar_feats
+        sonar_feats = (1 + self.sonar_ca[layer_num](sonar_feats) + self.sonar_sa[layer_num](sonar_feats)) * sonar_feats
         return sonar_feats, cam_feats
 
     def tokenize(self, feats):
