@@ -2,9 +2,6 @@ from collections import OrderedDict
 
 import torch
 import torch.nn as nn
-
-from torchvision.models import resnet50
-from torchvision.models import ResNet50_Weights
 from torchvision.ops import FeaturePyramidNetwork
 from util.CBAM import ChannelAttention, SpatialAttention
 
