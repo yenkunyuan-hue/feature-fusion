@@ -1,6 +1,5 @@
 from collections import OrderedDict
 
-import torch
 import torch.nn as nn
 from torchvision.ops import FeaturePyramidNetwork
 from util.CBAM import ChannelAttention, SpatialAttention
@@ -10,7 +9,6 @@ class DualResNet50(nn.Module):
     def __init__(self, model_camera, model_sonar, out_channel=512):
         super().__init__()
         self.in_channels_list = [256, 512, 1024, 2048]
-        self.in_width_list = [128, 64, 32, 16]        
         self.camera_ca = nn.ModuleList([ChannelAttention(512),
         ChannelAttention(1024),
         ChannelAttention(2048)])
@@ -66,32 +64,36 @@ class DualResNet50(nn.Module):
 
         c3_son_t = self.tokenize(c3_son)
         c3_cam_t = self.tokenize(c3_cam)
-        c3_stoc = self.son_mha_c3(query=c3_cam_t, key=c3_son_t, value=c3_son_t, need_weights=False)
-        c3_ctos = self.cam_mha_c3(query=c3_son_t, key=c3_cam_t, value=c3_cam_t, need_weights=False)
+        c3_stoc = self.son_mha_c3(query=c3_cam_t, key=c3_son_t, value=c3_son_t, need_weights=False)[0]
+        c3_ctos = self.cam_mha_c3(query=c3_son_t, key=c3_cam_t, value=c3_cam_t, need_weights=False)[0]
         c3_son_self, c3_cam_self = self.self_attention(c3_cam,c3_son,0)
-        c3_son = c3_son_self + self.untokenize(c3_ctos, 1)
-        c3_cam = c3_cam_self + self.untokenize(c3_stoc, 1)
+        # attention 输出长度等于 query 的长度，所以按 query 那一边特征图的 (H, W) 还原
+        # c3_ctos 的 query 是声呐 → 用声呐的尺寸；c3_stoc 的 query 是相机 → 用相机的尺寸
+        c3_son = c3_son_self + self.untokenize(c3_ctos, c3_son.shape[-2:])
+        c3_cam = c3_cam_self + self.untokenize(c3_stoc, c3_cam.shape[-2:])
 
         c4_son = net_son.layer3(c3_son)     # (B, 1024, 32,  32)   分辨率 1/16
         c4_cam = net_cam.layer3(c3_cam)
 
         c4_son_t = self.tokenize(c4_son)
         c4_cam_t = self.tokenize(c4_cam)
-        c4_stoc = self.son_mha_c4(query=c4_cam_t, key=c4_son_t, value=c4_son_t, need_weights=False)
-        c4_ctos = self.cam_mha_c4(query=c4_son_t, key=c4_cam_t, value=c4_cam_t, need_weights=False)
+        c4_stoc = self.son_mha_c4(query=c4_cam_t, key=c4_son_t, value=c4_son_t, need_weights=False)[0]
+        c4_ctos = self.cam_mha_c4(query=c4_son_t, key=c4_cam_t, value=c4_cam_t, need_weights=False)[0]
         c4_son_self, c4_cam_self = self.self_attention(c4_cam,c4_son,1)
-        c4_son = c4_son_self + self.untokenize(c4_ctos, 2)
-        c4_cam = c4_cam_self + self.untokenize(c4_stoc, 2)
+        # 同 C3：按 query 那一边的 (H, W) 还原
+        c4_son = c4_son_self + self.untokenize(c4_ctos, c4_son.shape[-2:])
+        c4_cam = c4_cam_self + self.untokenize(c4_stoc, c4_cam.shape[-2:])
 
         c5_son = net_son.layer4(c4_son)
         c5_cam = net_cam.layer4(c4_cam)
         c5_son_t = self.tokenize(c5_son)
         c5_cam_t = self.tokenize(c5_cam)
-        c5_stoc = self.son_mha_c5(query=c5_cam_t, key=c5_son_t, value=c5_son_t, need_weights=False)
-        c5_ctos = self.cam_mha_c5(query=c5_son_t, key=c5_cam_t, value=c5_cam_t, need_weights=False)
+        c5_stoc = self.son_mha_c5(query=c5_cam_t, key=c5_son_t, value=c5_son_t, need_weights=False)[0]
+        c5_ctos = self.cam_mha_c5(query=c5_son_t, key=c5_cam_t, value=c5_cam_t, need_weights=False)[0]
         c5_son_self, c5_cam_self = self.self_attention(c5_cam,c5_son,2)
-        c5_son = c5_son_self + self.untokenize(c5_ctos,3)
-        c5_cam = c5_cam_self + self.untokenize(c5_stoc,3)
+        # 同 C3：按 query 那一边的 (H, W) 还原
+        c5_son = c5_son_self + self.untokenize(c5_ctos, c5_son.shape[-2:])
+        c5_cam = c5_cam_self + self.untokenize(c5_stoc, c5_cam.shape[-2:])
 
         return {"c2":c2_son, "c3":c3_son, "c4":c4_son, "c5":c5_son}, {"c2":c2_cam, "c3":c3_cam, "c4":c4_cam, "c5":c5_cam}
 
@@ -111,15 +113,16 @@ class DualResNet50(nn.Module):
         # k = k_proj(feats)
         # v = v_proj(feats)
         return feats
-    def untokenize(self, feats, layer_num):
+    def untokenize(self, feats, hw):
+        # feats: (B, HW, C)，hw: 原特征图的 (H, W)
+        # 通道数和 H、W 都从张量本身取，不再依赖写死的尺寸，任意输入大小都能还原
+        B, _, C = feats.shape
+        H, W = hw
         feats = feats.transpose(1,2)
-        B = feats.shape[0]
         # B,HW,C ---> B, C, HW
-        feats = feats.reshape(B, self.in_channels_list[layer_num], self.in_width_list[layer_num], self.in_width_list[layer_num])
+        feats = feats.reshape(B, C, H, W)
         # B, C, HW --> B, C, H, W
         return feats
-
-
     
     def forward(self, cam, sonar):
         ''''input/output: camera, sonar'''

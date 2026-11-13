@@ -9,6 +9,7 @@ import torch
 from torch import nn
 #come from https://github.com/pytorch/vision/blob/main/torchvision/models/detection/generalized_rcnn.py
 class DualGeneralizedRCNN(nn.Module):
+    """camera is 1, sonar is 2"""
     def __init__(
         self,
         backbone: nn.Module,
@@ -23,9 +24,8 @@ class DualGeneralizedRCNN(nn.Module):
         self.backbone = backbone
         self.rpn_camera = rpn_1
         self.rpn_sonar = rpn_2
-        self.roi_heads_sonar = roi_heads_1
-        self.roi_heads_camera = roi_heads_2
-
+        self.roi_heads_camera = roi_heads_1
+        self.roi_heads_sonar = roi_heads_2
     def forward(
         self,
         images_camera: list[torch.Tensor],
