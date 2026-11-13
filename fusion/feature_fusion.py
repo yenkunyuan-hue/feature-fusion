@@ -36,26 +36,28 @@ class DualResNet50(nn.Module):
         self.cam = model_camera
         self.sonar = model_sonar
 
-    def features(self, x, y):
-        """x is camera, y is sonar"""
         net_cam = self.cam
         net_son = self.sonar
 
         # stem：ResNet 的第一部分
-        stem_cam = nn.Sequential(
+        self.stem_cam = nn.Sequential(
         net_cam.conv1,       # (B, 64, 256, 256)   7×7 卷积，stride 2
         net_cam.bn1,         # (B, 64, 256, 256)
         net_cam.relu,        # (B, 64, 256, 256)
         net_cam.maxpool)      # (B, 64, 128, 128)   3×3 池化，stride 2
 
-        stem_son = nn.Sequential(
+        self.stem_son = nn.Sequential(
         net_son.conv1,       # (B, 64, 256, 256)   7×7 卷积，stride 2
         net_son.bn1,         # (B, 64, 256, 256)
         net_son.relu,        # (B, 64, 256, 256)
         net_son.maxpool)      # (B, 64, 128, 128)   3×3 池化，stride 2
+    def features(self, x, y):
+        """x is camera, y is sonar"""
+        net_cam = self.cam
+        net_son = self.sonar
 
-        x = stem_cam(x)
-        y = stem_son(y)
+        x = self.stem_cam(x)
+        y = self.stem_son(y)
 
         c2_cam = net_cam.layer1(x)      # (B, 256,  128, 128)  分辨率 1/4
         c2_son = net_son.layer1(y)
